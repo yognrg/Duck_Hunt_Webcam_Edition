@@ -66,17 +66,18 @@ const audio = new AudioSynth();
 // ── Helpers ────────────────────────────────────────────────────────────────
 const DUCK_COLORS = ["#8B4513", "#556B2F", "#8B008B", "#B8860B"];
 
-function spawnDuck(canvas: HTMLCanvasElement, round: number): Duck {
+function spawnDuck(canvas: HTMLCanvasElement, round: number, speedMult: number): Duck {
   const fromLeft = Math.random() > 0.5;
-  const speed = 2.5 + round * 0.4;
+  // Base speed is gentle; round adds a small bump; speedMult scales the whole thing
+  const speed = (1.4 + round * 0.2) * speedMult;
   return {
     id: Math.random(),
-    x: fromLeft ? -60 : canvas.width + 60,
-    y: canvas.height * 0.2 + Math.random() * canvas.height * 0.45,
+    x: fromLeft ? -70 : canvas.width + 70,
+    y: canvas.height * 0.18 + Math.random() * canvas.height * 0.48,
     vx: (fromLeft ? 1 : -1) * speed,
-    vy: (Math.random() - 0.5) * 2,
+    vy: (Math.random() - 0.5) * 1.2,
     state: "FLYING",
-    w: 60, h: 48,
+    w: 68, h: 56,   // larger sprite = easier to hit
     frame: 0,
     shotsFired: 0,
   };
@@ -146,6 +147,7 @@ export default function Game() {
   const [uiAiming, setUiAiming] = useState(false);
   const [uiShooting, setUiShooting] = useState(false);
   const [uiRoundSummary, setUiRoundSummary] = useState({ round: 1, hits: 0, score: 0 });
+  const [speedLabel, setSpeedLabel] = useState<"SLOW" | "NORMAL" | "FAST">("NORMAL");
 
   // DOM refs
   const videoRef      = useRef<HTMLVideoElement>(null);
@@ -172,13 +174,16 @@ export default function Game() {
   const dogTimerRef       = useRef(0);
   const roundStartTimeRef = useRef(0);
 
-  const trackedPosRef = useRef<Pt>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-  const isAimingRef   = useRef(false);
-  const isShootingRef = useRef(false);
-  const confidenceRef = useRef(0);
-  const landmarksRef  = useRef<Pt[]>([]);
-  const lastShootRef  = useRef(0);
-  const shootFlashRef = useRef(0);
+  const trackedPosRef  = useRef<Pt>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const prevPosRef     = useRef<Pt>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const velRef         = useRef<Pt>({ x: 0, y: 0 });
+  const isAimingRef    = useRef(false);
+  const isShootingRef  = useRef(false);
+  const confidenceRef  = useRef(0);
+  const landmarksRef   = useRef<Pt[]>([]);
+  const lastShootRef   = useRef(0);
+  const shootFlashRef  = useRef(0);
+  const speedMultRef   = useRef(1.0); // controlled by speed selector
 
   // ── Start new round ──────────────────────────────────────────────────────
   function startRound(round: number, keepScore: boolean) {
@@ -297,25 +302,52 @@ export default function Game() {
 
           const tip   = hand[8];  // index fingertip
           const thumb = hand[4];  // thumb tip
-          const mcp   = hand[5];  // index MCP
+          const mcp   = hand[5];  // index MCP (knuckle)
+          const wrist = hand[0];  // wrist
           const mid   = hand[12]; // middle fingertip
 
-          // Mirrored mapping
-          const tx = (1 - tip.x) * window.innerWidth;
-          const ty = tip.y * window.innerHeight;
+          // ── Pointing-direction aim ─────────────────────────────────────
+          // Project along the wrist→tip vector to get the "barrel" endpoint.
+          // This feels more natural than raw tip position.
+          const dirX = tip.x - wrist.x;
+          const dirY = tip.y - wrist.y;
+          const EXTEND = 0.18; // how far past the tip to project
+          const aimX = tip.x + dirX * EXTEND;
+          const aimY = tip.y + dirY * EXTEND;
 
-          // Smooth
+          // Mirror horizontally (selfie cam)
+          const tx = (1 - aimX) * window.innerWidth;
+          const ty = aimY * window.innerHeight;
+
+          // ── Velocity-based prediction ──────────────────────────────────
+          const prev = trackedPosRef.current;
+          // Adaptive smoothing: more responsive when hand moves fast
+          const dist2prev = Math.hypot(tx - prev.x, ty - prev.y);
+          const alpha = Math.min(0.72, 0.45 + dist2prev * 0.003);
+          const smoothX = prev.x + (tx - prev.x) * alpha;
+          const smoothY = prev.y + (ty - prev.y) * alpha;
+
+          // Track velocity for look-ahead
+          velRef.current = {
+            x: (smoothX - prevPosRef.current.x) * 0.6 + velRef.current.x * 0.4,
+            y: (smoothY - prevPosRef.current.y) * 0.6 + velRef.current.y * 0.4,
+          };
+          prevPosRef.current = { x: smoothX, y: smoothY };
+
+          // Apply a small velocity look-ahead (feels snappier)
           trackedPosRef.current = {
-            x: trackedPosRef.current.x + (tx - trackedPosRef.current.x) * 0.35,
-            y: trackedPosRef.current.y + (ty - trackedPosRef.current.y) * 0.35,
+            x: smoothX + velRef.current.x * 0.35,
+            y: smoothY + velRef.current.y * 0.35,
           };
 
           const aiming = tip.y < mcp.y && mid.y > mcp.y;
           isAimingRef.current = aiming;
           confidenceRef.current = tip.visibility ?? 0.9;
 
-          const dist = Math.hypot(tip.x - thumb.x, tip.y - thumb.y);
-          const pinching = dist < 0.06;
+          // Normalize pinch threshold by hand size (wrist→mcp distance)
+          const handSize = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y);
+          const pinchDist = Math.hypot(tip.x - thumb.x, tip.y - thumb.y);
+          const pinching = pinchDist < Math.max(0.04, handSize * 0.35);
           const now = Date.now();
 
           if (pinching && now - lastShootRef.current > 500) {
@@ -473,7 +505,7 @@ export default function Game() {
         ) {
           const active = ducksRef.current.filter(d => d.state === "FLYING" || d.state === "HIT").length;
           if (active < 2) {
-            ducksRef.current.push(spawnDuck(canvas, roundRef.current));
+            ducksRef.current.push(spawnDuck(canvas, roundRef.current, speedMultRef.current));
             spawnedRef.current++;
             lastSpawnRef.current = now;
             if (Math.random() > 0.4) audio.flap();
@@ -714,8 +746,36 @@ export default function Game() {
                   <p className="text-white mb-4 leading-7">1. POINT INDEX FINGER TO AIM</p>
                   <p className="text-white mb-8 leading-7">2. PINCH THUMB TO SHOOT</p>
                   <p className="text-[#5C94FC] mb-3">{TOTAL_ROUNDS} ROUNDS  •  {DUCKS_PER_ROUND} DUCKS EACH</p>
-                  <p className="text-[#5C94FC] mb-8">{ROUND_DURATION_SEC}s PER ROUND</p>
-                  <p className="text-[#00FFFF] animate-pulse mt-4">PINCH TO START</p>
+                  <p className="text-[#5C94FC] mb-6">{ROUND_DURATION_SEC}s PER ROUND</p>
+
+                  {/* Speed selector — needs pointer-events-auto to be clickable */}
+                  <div className="pointer-events-auto mb-8">
+                    <p className="text-white/60 mb-3 text-[10px]">DUCK SPEED</p>
+                    <div className="flex gap-3 justify-center">
+                      {(["SLOW", "NORMAL", "FAST"] as const).map((s) => {
+                        const mult = s === "SLOW" ? 0.55 : s === "FAST" ? 1.7 : 1.0;
+                        const active = speedLabel === s;
+                        return (
+                          <button
+                            key={s}
+                            onClick={() => {
+                              setSpeedLabel(s);
+                              speedMultRef.current = mult;
+                            }}
+                            className={`px-3 py-2 rounded border text-[10px] transition-all ${
+                              active
+                                ? "bg-[#00FFFF] text-black border-[#00FFFF]"
+                                : "bg-transparent text-white/60 border-white/20 hover:border-white/50"
+                            }`}
+                          >
+                            {s}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <p className="text-[#00FFFF] animate-pulse mt-2">PINCH TO START</p>
                 </div>
               )}
             </motion.div>

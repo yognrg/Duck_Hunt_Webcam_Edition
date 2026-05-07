@@ -1,0 +1,123 @@
+IMPORTANT — THIS EXPERIENCE MUST USE REAL WEBCAM INPUT.
+
+DO NOT create:
+
+* mouse tracking
+* cursor interaction
+* trackpad gestures
+* hover-based controls
+* fake cursor movement
+
+The prototype MUST simulate REAL CAMERA-BASED HAND TRACKING.
+
+When the experience starts:
+
+1. Request webcam permission immediately
+2. Open live camera feed
+3. Use webcam video as the hand-tracking input source
+4. Detect the user’s real hand inside the camera feed
+
+The interaction should behave like:
+
+* MediaPipe hand tracking
+* computer vision gesture detection
+* webcam AI interaction
+* Vision Pro hand tracking
+
+NO MOUSE CURSOR SHOULD EXIST ANYWHERE IN THE EXPERIENCE.
+
+The user should control the game ONLY through webcam hand movement.
+
+HAND TRACKING REQUIREMENTS:
+
+* Detect real hand position from webcam
+* Track finger joints
+* Track fingertip direction
+* Detect finger-gun pose
+* Detect shooting gesture
+
+The hand itself becomes the aiming controller.
+
+SHOW LIVE CAMERA FEED:
+Add a floating webcam preview in the TOP RIGHT CORNER similar to:
+
+* FaceTime self-view
+* video call preview
+* streaming camera overlay
+
+The camera preview must:
+
+* show the user live
+* show the tracked hand
+* visibly react to hand movement
+* include tracking dots and skeletal hand mapping
+* clearly prove webcam tracking is active
+
+CAMERA WINDOW STYLE:
+
+* rounded corners
+* floating glassmorphism frame
+* subtle shadow
+* premium Apple-style UI
+* slightly transparent border
+
+GAMEPLAY:
+Keep the gameplay visually VERY close to the original retro Duck Hunt:
+
+* pixel ducks
+* retro grass
+* blue sky
+* retro dog
+* classic score UI
+* old-school arcade feel
+
+DO NOT modernize the game art heavily.
+
+The futuristic feeling should come ONLY from:
+
+* webcam tracking
+* gesture detection
+* spatial overlays
+* AI tracking interface
+
+GESTURE SYSTEM:
+Finger gun pose:
+
+* index finger forward
+* thumb up
+
+Shoot interaction:
+
+* thumb flick
+  OR
+* pinch gesture
+
+Crosshair follows the direction of the real index finger from webcam tracking.
+
+VISUAL FEEDBACK:
+When hand is detected:
+Show:
+
+* tracking points
+* skeletal lines
+* AI scan pulse
+* gesture confidence indicator
+
+When shooting:
+
+* retro duck hit effect
+* pixel burst
+* floating score
+* subtle futuristic ripple animation
+
+IMPORTANT TECH DIRECTION:
+The experience should feel like it uses:
+
+* real webcam input
+* computer vision
+* AI hand tracking
+
+NOT like a website using mouse position.
+
+FINAL GOAL:
+Create a believable “Duck Hunt controlled with webcam hand gestures” experience that feels cinematic, nostalgic, futuristic, premium, and highly shareable for LinkedIn.

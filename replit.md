@@ -1,36 +1,47 @@
-# [Project name]
+# Duck Hunt — Webcam Edition
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A viral-ready, retro-meets-futuristic Duck Hunt game controlled entirely by real webcam hand gestures via MediaPipe AI hand tracking. No mouse, no cursor — your index finger IS the gun.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/duck-hunt run dev` — run the game (frontend only, no backend needed)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React + Vite + Tailwind CSS
+- Hand Tracking: @mediapipe/tasks-vision (HandLandmarker, GPU delegate)
+- Animations: Framer Motion
+- Audio: Web Audio API (synthesized, no audio files)
+- Build: Vite (static output)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/duck-hunt/src/pages/Game.tsx` — main game component: webcam, MediaPipe, canvas game loop, gesture detection
+- `artifacts/duck-hunt/src/App.tsx` — minimal wrapper
+- `artifacts/duck-hunt/src/index.css` — dark gaming theme
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- MediaPipe HandLandmarker runs in VIDEO mode using `detectForVideo` in a rAF loop
+- WASM runtime loaded from CDN (cdn.jsdelivr.net), model from Google Cloud Storage
+- Guard: `readyState >= 2 && videoWidth > 0 && videoHeight > 0` before calling detectForVideo prevents MediaPipe ROI crash on unloaded video
+- Crosshair position is 100% from landmark[8] (index fingertip), mirrored horizontally
+- Web Audio API synthesizes all sounds; no external audio files needed
+- Single canvas for game world + AR overlay rendering
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Duck Hunt game with real webcam hand tracking:
+- Point index finger to aim (crosshair follows landmark 8)
+- Pinch thumb+index to shoot
+- Retro NES art: pixel ducks, green grass, blue sky, chunky dog
+- Futuristic overlay: skeletal hand tracking, AI scan pulse, gesture confidence HUD
+- Webcam preview in top-right (FaceTime style) with live skeleton overlay
+- Score, high score, rounds, miss counter
+- Web Audio sound effects
 
 ## User preferences
 
@@ -38,7 +49,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- MediaPipe WASM + model loads from CDN on first run — expect ~2-3s init time
+- Preview environment has no webcam, so it shows "INITIALIZING CAMERA SYSTEM" — works correctly with a real webcam
+- Always guard `detectForVideo` with `readyState >= 2 && videoWidth > 0` check
 
 ## Pointers
 

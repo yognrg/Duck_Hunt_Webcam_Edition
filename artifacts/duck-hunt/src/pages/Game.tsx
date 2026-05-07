@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const DUCKS_PER_ROUND = 10;
+const BULLETS_PER_ROUND = 20;
 const TOTAL_ROUNDS = 5;
 const ROUND_DURATION_SEC = 45;
 
@@ -165,6 +166,8 @@ export default function Game() {
   const hitCountRef   = useRef(0);
   const missCountRef  = useRef(0);
 
+  const bulletsRef    = useRef(BULLETS_PER_ROUND);
+
   const ducksRef      = useRef<Duck[]>([]);
   const particlesRef  = useRef<Particle[]>([]);
   const floatTextsRef = useRef<{ x: number; y: number; text: string; life: number }[]>([]);
@@ -190,6 +193,7 @@ export default function Game() {
     roundRef.current      = round;
     hitCountRef.current   = 0;
     missCountRef.current  = 0;
+    bulletsRef.current    = BULLETS_PER_ROUND;
     spawnedRef.current    = 0;
     lastSpawnRef.current  = 0;
     ducksRef.current      = [];
@@ -350,7 +354,8 @@ export default function Game() {
           const pinching = pinchDist < Math.max(0.04, handSize * 0.35);
           const now = Date.now();
 
-          if (pinching && now - lastShootRef.current > 500) {
+          const canShoot = gameStateRef.current !== "PLAYING" || bulletsRef.current > 0;
+          if (pinching && canShoot && now - lastShootRef.current > 500) {
             lastShootRef.current = now;
             isShootingRef.current = true;
             shootFlashRef.current = performance.now();
@@ -360,6 +365,7 @@ export default function Game() {
 
             const gs = gameStateRef.current;
             if (gs === "PLAYING") {
+              bulletsRef.current = Math.max(0, bulletsRef.current - 1);
               checkHit(trackedPosRef.current.x, trackedPosRef.current.y);
             } else if (gs === "START" || gs === "GAME_OVER") {
               startGame();
@@ -611,7 +617,7 @@ export default function Game() {
       px(`BEST  ${String(highScoreRef.current).padStart(6, "0")}`, W / 2, 38, 16, "#FFD700", "center");
       px(`RND ${roundRef.current}/${TOTAL_ROUNDS}`, W - 24, 38, 16, "#5C94FC", "right");
 
-      // ── Duck progress bar (bottom) ──
+      // ── Duck progress bar (bottom left) ──
       ctx.fillStyle = "rgba(0,0,0,0.75)";
       ctx.fillRect(16, H - 54, 240, 38);
       ctx.strokeStyle = "#FFF";
@@ -628,6 +634,36 @@ export default function Game() {
           ctx.fillStyle = "#FFF";
           ctx.fillRect(bx + 3, by + 6, 10, 3);
           ctx.fillRect(bx + 6, by + 3, 3, 10);
+        }
+      }
+
+      // ── Ammo counter (bottom right) ──
+      const bullets = bulletsRef.current;
+      const ammoW = 280;
+      const ammoX = W - ammoW - 16;
+      const ammoY = H - 54;
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(ammoX, ammoY, ammoW, 38);
+      ctx.strokeStyle = bullets <= 5 ? "#FF4444" : "#FFF";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(ammoX, ammoY, ammoW, 38);
+
+      // Label
+      px("AMMO", ammoX + 8, ammoY + 26, 10, bullets <= 5 ? "#FF4444" : "#AAA");
+
+      // Bullet pips (20 dots in two rows of 10)
+      for (let i = 0; i < BULLETS_PER_ROUND; i++) {
+        const col = i % 10;
+        const row = Math.floor(i / 10);
+        const bx = ammoX + 64 + col * 20;
+        const by = ammoY + 8 + row * 14;
+        const spent = i >= bullets;
+        ctx.fillStyle = spent ? "#333" : (bullets <= 5 ? "#FF4444" : "#FFD700");
+        ctx.fillRect(bx, by, 10, 9);
+        if (!spent) {
+          // Highlight top edge for "live" bullets
+          ctx.fillStyle = "rgba(255,255,255,0.3)";
+          ctx.fillRect(bx, by, 10, 2);
         }
       }
 

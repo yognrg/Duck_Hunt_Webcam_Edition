@@ -188,6 +188,11 @@ export default function Game() {
   const shootFlashRef  = useRef(0);
   const speedMultRef   = useRef(1.0); // controlled by speed selector
 
+  // ── Pause-on-no-hand ─────────────────────────────────────────────────────
+  const pausedRef      = useRef(false);
+  const noHandSinceRef = useRef(0);   // performance.now() when hand was lost
+  const pauseStartRef  = useRef(0);   // performance.now() when pause began
+
   // ── Start new round ──────────────────────────────────────────────────────
   function startRound(round: number, keepScore: boolean) {
     roundRef.current      = round;
@@ -304,6 +309,14 @@ export default function Game() {
           const hand = results.landmarks[0];
           landmarksRef.current = hand;
 
+          // ── Unpause when hand reappears ────────────────────────────────
+          if (pausedRef.current) {
+            const pausedDuration = performance.now() - pauseStartRef.current;
+            roundStartTimeRef.current += pausedDuration; // keep timer honest
+            pausedRef.current = false;
+          }
+          noHandSinceRef.current = 0;
+
           const tip   = hand[8];  // index fingertip
           const thumb = hand[4];  // thumb tip
           const mcp   = hand[5];  // index MCP (knuckle)
@@ -388,6 +401,16 @@ export default function Game() {
             setUiConfidence(0);
             setUiAiming(false);
             setUiShooting(false);
+          }
+
+          // ── Pause after 800 ms with no hand ───────────────────────────
+          if (gameStateRef.current === "PLAYING") {
+            if (noHandSinceRef.current === 0) {
+              noHandSinceRef.current = performance.now();
+            } else if (!pausedRef.current && performance.now() - noHandSinceRef.current > 800) {
+              pausedRef.current = true;
+              pauseStartRef.current = performance.now();
+            }
           }
         }
 
@@ -497,6 +520,37 @@ export default function Game() {
       });
 
       const gs = gameStateRef.current;
+      const paused = pausedRef.current;
+
+      // ── Pause overlay (no hand detected during PLAYING) ──
+      if (gs === "PLAYING" && paused) {
+        // Dim the scene
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, W, H);
+
+        // Pulsing border
+        const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+        ctx.strokeStyle = `rgba(255,${Math.floor(100 + 155 * pulse)},0,0.9)`;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(8, 8, W - 16, H - 16);
+
+        // Icon — hand outline
+        const cx = W / 2, cy = H / 2 - 60;
+        ctx.strokeStyle = "#FF8800";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(cx - 30, cy - 40, 60, 80);
+        // Finger stubs
+        for (let f = 0; f < 4; f++) {
+          ctx.strokeRect(cx - 22 + f * 14, cy - 60, 10, 24);
+        }
+
+        px("GAME PAUSED", W / 2, H / 2 + 10, 20, "#FF8800", "center");
+        px("SHOW YOUR HAND", W / 2, H / 2 + 46, 13, "#FFD700", "center");
+        px("TO RESUME", W / 2, H / 2 + 72, 13, "#FFD700", "center");
+
+        animId = requestAnimationFrame(render);
+        return;
+      }
 
       // ── Game logic ──
       if (gs === "PLAYING") {

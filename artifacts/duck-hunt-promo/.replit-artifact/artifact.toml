@@ -1,0 +1,28 @@
+kind = "video"
+previewPath = "/duck-hunt-promo/"
+title = "Duck Hunt — Webcam Edition Promo"
+description = "A short animated arcade-style promo video showcasing Duck Hunt's real webcam hand tracking, index-finger aiming, pinch-to-shoot gameplay, retro-futuristic visuals, pause-on-no-hand behavior, and the Created by Yog credit."
+version = "1.0.0"
+id = "artifacts/duck-hunt-promo"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/duck-hunt-promo/" ]
+localPort = 25479
+
+[services.development]
+run = "pnpm --filter @workspace/duck-hunt-promo run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/duck-hunt-promo", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/duck-hunt-promo/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25479"
+BASE_PATH = "/duck-hunt-promo/"

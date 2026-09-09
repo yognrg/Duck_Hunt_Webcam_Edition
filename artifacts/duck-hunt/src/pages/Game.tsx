@@ -961,6 +961,14 @@ export default function Game() {
           </div>
         </div>
       </div>
+
+      {/* Copyright credit */}
+      <div
+        className="absolute bottom-3 left-1/2 z-50 -translate-x-1/2 text-[9px] tracking-[0.18em] text-white/45"
+        style={{ fontFamily: '"Press Start 2P", monospace' }}
+      >
+        Created by Yog
+      </div>
     </div>
   );
 }

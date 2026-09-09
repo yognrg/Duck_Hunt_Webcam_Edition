@@ -1,4 +1,5 @@
 kind = "video"
+videoAspectRatio = "16:9"
 previewPath = "/duck-hunt-promo/"
 title = "Duck Hunt — Webcam Edition Promo"
 description = "A short animated arcade-style promo video showcasing Duck Hunt's real webcam hand tracking, index-finger aiming, pinch-to-shoot gameplay, retro-futuristic visuals, pause-on-no-hand behavior, and the Created by Yog credit."

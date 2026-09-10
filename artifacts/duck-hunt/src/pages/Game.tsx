@@ -227,39 +227,44 @@ export default function Game() {
 
   // ── Collision check ──────────────────────────────────────────────────────
   function checkHit(px: number, py: number) {
-    let hit = false;
+    // Pick the closest shootable duck within the hitbox, so overlapping ducks
+    // resolve to the one actually under the crosshair.
+    let target: Duck | null = null;
+    let bestDist = Infinity;
     for (const duck of ducksRef.current) {
-      if (duck.state !== "FLYING") continue;
+      // Only already-dead/dying ducks are unshootable.
+      if (duck.state === "HIT" || duck.state === "FALLING") continue;
       if (Math.abs(px - duck.x) < duck.w * 0.7 && Math.abs(py - duck.y) < duck.h * 0.7) {
-        duck.state = "HIT";
-        duck.vx = 0;
-        duck.vy = 0;
-        hit = true;
-        hitCountRef.current++;
-        scoreRef.current += 100 * roundRef.current;
-        if (scoreRef.current > highScoreRef.current) {
-          highScoreRef.current = scoreRef.current;
-          localStorage.setItem("duckHuntHighScore", String(scoreRef.current));
-        }
-        for (let i = 0; i < 18; i++) {
-          particlesRef.current.push({
-            x: duck.x, y: duck.y,
-            vx: (Math.random() - 0.5) * 12,
-            vy: (Math.random() - 0.5) * 12 - 3,
-            life: 1, color: i % 3 === 0 ? "#FFD700" : "#FFF",
-            size: 4 + Math.random() * 6,
-          });
-        }
-        floatTextsRef.current.push({ x: duck.x, y: duck.y - 20, text: `+${100 * roundRef.current}`, life: 1.2 });
-        audio.hit();
-        setTimeout(() => { duck.state = "FALLING"; }, 400);
-        break;
-      } else {
-        duck.shotsFired++;
-        if (duck.shotsFired >= 3) duck.state = "ESCAPING";
+        const dist = Math.hypot(px - duck.x, py - duck.y);
+        if (dist < bestDist) { bestDist = dist; target = duck; }
       }
     }
-    if (!hit) audio.miss();
+
+    if (target) {
+      target.state = "HIT";
+      target.vx = 0;
+      target.vy = 0;
+      hitCountRef.current++;
+      scoreRef.current += 100 * roundRef.current;
+      if (scoreRef.current > highScoreRef.current) {
+        highScoreRef.current = scoreRef.current;
+        localStorage.setItem("duckHuntHighScore", String(scoreRef.current));
+      }
+      for (let i = 0; i < 18; i++) {
+        particlesRef.current.push({
+          x: target.x, y: target.y,
+          vx: (Math.random() - 0.5) * 12,
+          vy: (Math.random() - 0.5) * 12 - 3,
+          life: 1, color: i % 3 === 0 ? "#FFD700" : "#FFF",
+          size: 4 + Math.random() * 6,
+        });
+      }
+      floatTextsRef.current.push({ x: target.x, y: target.y - 20, text: `+${100 * roundRef.current}`, life: 1.2 });
+      audio.hit();
+      setTimeout(() => { target.state = "FALLING"; }, 400);
+    } else {
+      audio.miss();
+    }
   }
 
   // ── MediaPipe loop ───────────────────────────────────────────────────────

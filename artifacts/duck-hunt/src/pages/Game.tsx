@@ -3,13 +3,17 @@ import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const DUCKS_PER_ROUND = 10;
-const BULLETS_PER_ROUND = 20;
+// A "slot" is how many ducks fly per round; the player picks it on the start screen.
+const SLOT_OPTIONS = [5, 10, 15] as const;
 const TOTAL_ROUNDS = 5;
-const ROUND_DURATION_SEC = 45;
+const DOG_SHOW_MS = 2800; // how long the dog stays up before the round summary
+const bulletsFor = (slot: number) => slot * 2;
+const spawnIntervalFor = (round: number) => Math.max(1500, 4000 - round * 300);
+// enough time for every duck in the slot to cross the screen, plus a margin
+const roundSecondsFor = (slot: number, round: number) => Math.ceil((slot * spawnIntervalFor(round)) / 1000 + 12);
 
 // ── Types ──────────────────────────────────────────────────────────────────
-type GameState = "START" | "PLAYING" | "ROUND_END" | "GAME_OVER";
+type GameState = "START" | "PLAYING" | "DOG" | "ROUND_END" | "GAME_OVER";
 
 interface Pt { x: number; y: number; z?: number; }
 
@@ -78,64 +82,166 @@ function spawnDuck(canvas: HTMLCanvasElement, round: number, speedMult: number):
     vx: (fromLeft ? 1 : -1) * speed,
     vy: (Math.random() - 0.5) * 1.2,
     state: "FLYING",
-    w: 68, h: 56,   // larger sprite = easier to hit
+    w: 80, h: 56,   // matches the 80x55 sprite; generous hitbox
     frame: 0,
     shotsFired: 0,
   };
 }
 
-function drawDuck(ctx: CanvasRenderingContext2D, duck: Duck) {
-  ctx.save();
-  ctx.translate(duck.x, duck.y);
-  if (duck.vx < 0) ctx.scale(-1, 1);
+// ── Pixel art ──────────────────────────────────────────────────────────────
+// Sprites are rows of palette keys ("." is transparent), drawn as chunky pixels.
+const PAL: Record<string, string> = {
+  k: "#000000", w: "#FCFCFC", g: "#00A844", G: "#005800", o: "#FC9838",
+  y: "#F8D878", b: "#A85C2C", B: "#503000", R: "#D82800", n: "#FCBCB0", u: "#0058F8",
+};
 
-  const { w, h } = duck;
-  const p = 4;
-
-  if (duck.state === "HIT" || duck.state === "FALLING") {
-    ctx.rotate(duck.state === "FALLING" ? Math.PI / 6 : 0);
-    ctx.fillStyle = "#8B4513";
-    ctx.fillRect(-w / 2, -h / 2, w, h);
-    ctx.fillStyle = "#FFD700";
-    ctx.fillRect(w / 2 - p, -h / 4, p * 3, p * 2);
-    ctx.fillStyle = "#FFF";
-    ctx.fillRect(w / 4, -h / 4, p * 2, p * 2);
-  } else {
-    ctx.fillStyle = "#8B4513";
-    ctx.fillRect(-w / 2, -h / 4, w, h / 2);
-    ctx.fillStyle = duck.frame % 20 < 10 ? "#A0522D" : "#D2691E";
-    ctx.fillRect(-w / 4, duck.frame % 20 < 10 ? -h / 2 : h / 8, w / 2, h / 3);
-    ctx.fillStyle = "#FFD700";
-    ctx.fillRect(w / 2 - p, -p, p * 3, p * 2);
-    ctx.fillStyle = "#000";
-    ctx.fillRect(w / 4, -h / 4, p, p);
-    ctx.fillStyle = "#FFF";
-    ctx.fillRect(w / 4 + 1, -h / 4 + 1, p - 2, p - 2);
+function sprite(ctx: CanvasRenderingContext2D, rows: string[], x: number, y: number, px: number, flip = false) {
+  for (let j = 0; j < rows.length; j++) {
+    const row = rows[j];
+    for (let i = 0; i < row.length; i++) {
+      const c = row[i];
+      if (c === ".") continue;
+      ctx.fillStyle = PAL[c];
+      const xi = flip ? row.length - 1 - i : i;
+      ctx.fillRect(Math.round(x + xi * px), Math.round(y + j * px), px, px);
+    }
   }
-  ctx.restore();
 }
 
-function drawDog(ctx: CanvasRenderingContext2D, cx: number, cy: number, laugh: boolean, t: number) {
-  const bounce = laugh ? Math.sin(t / 80) * 6 : 0;
-  const y = cy + bounce;
+const DUCK_SPRITES = {
+  up: [
+    "..kk............",
+    "..kkk...........",
+    "...kkk......ggg.",
+    "....kkkk...gggg.",
+    ".....kkkk..gwkgo",
+    "......kkkkkgggoo",
+    "...kkkkkkkkkgg..",
+    "..kkkkkkwwkkk...",
+    "...kkkkkkkkkk...",
+    ".....kkkkkkk....",
+    "......oo..oo....",
+  ],
+  down: [
+    "................",
+    "............ggg.",
+    "...........gggg.",
+    "...........gwkgo",
+    "..kkkkkkkkkgggoo",
+    ".kkkkkkkwwkkgg..",
+    "..kkkkkkkkkkk...",
+    "...kkkkkkkkk....",
+    "....kkkk........",
+    "...kkk..oo..oo..",
+    "..kk............",
+  ],
+  hit: [
+    "....ggg.........",
+    "...gggg..k...k..",
+    "...gkkgo..k.k...",
+    "...ggggoo..k....",
+    "....kkkk..k.k...",
+    "..kkkkkkkk...k..",
+    ".kkkkwwkkkk.....",
+    ".kkkkkkkkkk.....",
+    "..kkkkkkkk......",
+    "....o..o........",
+  ],
+  fall: [
+    "......o..o......",
+    "....kkkkkkkk....",
+    "...kkkkkkkkkk...",
+    "...kkkwwkkkkk...",
+    "....kkkkkkkk....",
+    ".....kkkkkk.....",
+    "......gggg......",
+    ".....ggwkgg.....",
+    "......gggo......",
+    ".......oo.......",
+  ],
+};
+const DUCK_PX = 5; // 16x11 sprite → 80x55 on screen
 
-  ctx.fillStyle = "#CD853F";
-  ctx.fillRect(cx - 20, y, 40, 50);
-  ctx.fillStyle = "#8B4513";
-  ctx.fillRect(cx - 15, y - 30, 30, 35);
-  ctx.fillRect(cx - 28, y - 20, 14, 8);
-  ctx.fillRect(cx + 14, y - 20, 14, 8);
-  ctx.fillStyle = "#000";
-  ctx.fillRect(cx - 8, y - 22, 6, 6);
-  ctx.fillRect(cx + 2, y - 22, 6, 6);
-  ctx.fillStyle = "#FFB6C1";
-  if (laugh) {
-    ctx.fillRect(cx - 12, y - 8, 24, 10);
-    ctx.fillStyle = "#FF0000";
-    ctx.fillRect(cx - 6, y - 6, 12, 4);
-  } else {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(cx - 4, y - 6, 8, 4);
+function drawDuck(ctx: CanvasRenderingContext2D, duck: Duck) {
+  const flip = duck.vx < 0;
+  let rows = duck.frame % 16 < 8 ? DUCK_SPRITES.up : DUCK_SPRITES.down;
+  if (duck.state === "HIT") rows = DUCK_SPRITES.hit;
+  if (duck.state === "FALLING") rows = DUCK_SPRITES.fall;
+  const fallFlip = duck.state === "FALLING" ? Math.floor(duck.frame / 5) % 2 === 0 : flip;
+  sprite(ctx, rows, duck.x - 8 * DUCK_PX, duck.y - 6 * DUCK_PX, DUCK_PX, fallFlip);
+}
+
+// The dog: a long-eared hound that pops out of the grass when the slot is over.
+const DOG_HAPPY = [
+  "......BB..........BB......",
+  ".....BBbB........BbBB.....",
+  "....BBbbB.yyyyyy.BbbBB....",
+  "....BbbbByyyyyyyyBbbbB....",
+  "....BbbBByywwyywwyBbbB....",
+  "....BbbB.yywkyywkyBbbB....",
+  "....BbB..yyyyyyyyy.BbB....",
+  ".....B...yyyykkyyy..B.....",
+  ".........yyykkkkyy........",
+  ".........yyRRRRRyy........",
+  "..........yyRnnRyy........",
+  "...........yyyyyy.........",
+  "..........bbbbbbbb........",
+  ".........bbbbyybbbb.......",
+  "........bbbbyyyybbbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+];
+const DOG_NERVOUS = [
+  "......BB..........BB......",
+  ".....BBbB........BbBB.....",
+  "....BBbbB.yyyyyy.BbbBB....",
+  "....BbbbByyyyyyyyBbbbB....",
+  "....BbbBBywwwyywwwBbbB....",
+  "....BbbB.ywkwyywkwBbbB....",
+  "....BbB..yywyyyywyy.BbB...",
+  ".....B...yyyykkyyy..B.....",
+  ".........yyykkkkyy........",
+  ".........yykyykyky........",
+  ".........yyykkyykk........",
+  "...........yyyyyy.........",
+  "..........bbbbbbbb........",
+  ".........bbbbyybbbb.......",
+  "........bbbbyyyybbbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+  "........bbbyyyyyybbb......",
+];
+const PAW = ["..yy..", ".yyyy.", ".yyyy.", "..yy.."];
+const SWEAT = [".w.", "wuw", "wuw", ".w."];
+const DOG_PX = 5;
+
+/** Draws the dog with its top at `top`; happy dogs hold up to two ducks, nervous ones shake and sweat. */
+function drawDog(ctx: CanvasRenderingContext2D, cx: number, top: number, hits: number, t: number) {
+  const P = DOG_PX;
+  const w = 26 * P;
+  if (hits === 0) {
+    const x = cx - w / 2 + Math.round(Math.sin(t / 25) * 2);
+    sprite(ctx, DOG_NERVOUS, x, top, P);
+    if (Math.floor(t / 330) % 2 === 0) sprite(ctx, SWEAT, x + 2 * P, top + 4 * P, P);
+    else sprite(ctx, SWEAT, x + 23 * P, top + 6 * P, P);
+    sprite(ctx, PAW, x + 3 * P, top + 12 * P, P);
+    sprite(ctx, PAW, x + 17 * P, top + 12 * P, P);
+    return;
+  }
+  const x = cx - w / 2;
+  const spots = hits === 1 ? [x + 20 * P] : [x - 7 * P, x + 20 * P];
+  // arms first so the face stays on top
+  for (const hx of spots) {
+    ctx.fillStyle = PAL.y; ctx.fillRect(hx + 6 * P, top - P, 4 * P, 15 * P);
+    ctx.fillStyle = PAL.b; ctx.fillRect(hx + 6 * P, top - P, P, 15 * P);
+  }
+  sprite(ctx, DOG_HAPPY, x, top, P);
+  for (const hx of spots) {
+    sprite(ctx, PAW, hx + 5 * P, top - 4 * P, P);
+    sprite(ctx, DUCK_SPRITES.fall, hx, top - 14 * P, P);
   }
 }
 
@@ -149,6 +255,7 @@ export default function Game() {
   const [uiShooting, setUiShooting] = useState(false);
   const [uiRoundSummary, setUiRoundSummary] = useState({ round: 1, hits: 0, score: 0 });
   const [speedLabel, setSpeedLabel] = useState<"SLOW" | "NORMAL" | "FAST">("NORMAL");
+  const [slotLabel, setSlotLabel] = useState<number>(10);
 
   // DOM refs
   const videoRef      = useRef<HTMLVideoElement>(null);
@@ -166,7 +273,8 @@ export default function Game() {
   const hitCountRef   = useRef(0);
   const missCountRef  = useRef(0);
 
-  const bulletsRef    = useRef(BULLETS_PER_ROUND);
+  const slotRef       = useRef(10); // ducks per round, picked on the start screen
+  const bulletsRef    = useRef(bulletsFor(10));
 
   const ducksRef      = useRef<Duck[]>([]);
   const particlesRef  = useRef<Particle[]>([]);
@@ -198,7 +306,7 @@ export default function Game() {
     roundRef.current      = round;
     hitCountRef.current   = 0;
     missCountRef.current  = 0;
-    bulletsRef.current    = BULLETS_PER_ROUND;
+    bulletsRef.current    = bulletsFor(slotRef.current);
     spawnedRef.current    = 0;
     lastSpawnRef.current  = 0;
     ducksRef.current      = [];
@@ -560,12 +668,12 @@ export default function Game() {
       // ── Game logic ──
       if (gs === "PLAYING") {
         const elapsed = (now - roundStartTimeRef.current) / 1000;
-        const timeLeft = Math.max(0, ROUND_DURATION_SEC - elapsed);
+        const timeLeft = Math.max(0, roundSecondsFor(slotRef.current, roundRef.current) - elapsed);
 
         // Spawn ducks
-        const spawnInterval = Math.max(1500, 4000 - roundRef.current * 300);
+        const spawnInterval = spawnIntervalFor(roundRef.current);
         if (
-          spawnedRef.current < DUCKS_PER_ROUND &&
+          spawnedRef.current < slotRef.current &&
           now - lastSpawnRef.current > spawnInterval
         ) {
           const active = ducksRef.current.filter(d => d.state === "FLYING" || d.state === "HIT").length;
@@ -577,16 +685,15 @@ export default function Game() {
           }
         }
 
-        // Round over: all ducks spawned and gone, OR timer ran out
-        const allGone = spawnedRef.current >= DUCKS_PER_ROUND && ducksRef.current.length === 0;
+        // Slot over: every duck spawned and gone, OR timer ran out.
+        // The dog comes up first; the round summary follows once it's done.
+        const allGone = spawnedRef.current >= slotRef.current && ducksRef.current.length === 0;
         if (allGone || timeLeft <= 0) {
-          // Force any remaining ducks to escape
           ducksRef.current = [];
-          gameStateRef.current = "ROUND_END";
+          gameStateRef.current = "DOG";
           dogTimerRef.current = now;
           setUiRoundSummary({ round: roundRef.current, hits: hitCountRef.current, score: scoreRef.current });
-          setUiState("ROUND_END");
-          if (missCountRef.current >= 6) audio.dogLaugh();
+          if (hitCountRef.current === 0) audio.dogLaugh(); else audio.hit();
         }
 
         // Timer display
@@ -628,6 +735,24 @@ export default function Game() {
         drawDuck(ctx, d);
       }
 
+      // ── Dog: rises out of the grass, holds, sinks back, then the summary shows ──
+      if (gs === "DOG") {
+        const age = now - dogTimerRef.current;
+        const riseMs = 500;
+        const up = age < riseMs ? age / riseMs
+          : age < DOG_SHOW_MS - riseMs ? 1
+          : Math.max(0, (DOG_SHOW_MS - age) / riseMs);
+        const top = H * 0.82 - 17 * DOG_PX * up;
+        drawDog(ctx, W / 2, top, hitCountRef.current, now);
+        if (up === 1 && hitCountRef.current > 0) {
+          px(`x${hitCountRef.current}`, W / 2, top - 22 * DOG_PX, 22, "#FFF", "center");
+        }
+        if (age >= DOG_SHOW_MS) {
+          gameStateRef.current = "ROUND_END";
+          setUiState("ROUND_END");
+        }
+      }
+
       // ── Grass ──
       ctx.fillStyle = "#00A800";
       ctx.fillRect(0, H * 0.82, W, H * 0.18);
@@ -659,16 +784,6 @@ export default function Game() {
         ctx.globalAlpha = 1;
       }
 
-      // ── Dog (round-end / game-over) ──
-      if (gs === "ROUND_END" || gs === "GAME_OVER") {
-        const age = now - dogTimerRef.current;
-        if (age < 4000) {
-          const rise = Math.min(1, age / 800);
-          const dogY = H * 0.82 - 70 * rise;
-          drawDog(ctx, W / 2, dogY, missCountRef.current >= 6, now);
-        }
-      }
-
       // ── Score bar (top) ──
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, W, 58);
@@ -682,17 +797,20 @@ export default function Game() {
       ctx.strokeStyle = "#FFF";
       ctx.lineWidth = 1;
       ctx.strokeRect(16, H - 54, 240, 38);
-      for (let i = 0; i < DUCKS_PER_ROUND; i++) {
-        const bx = 24 + i * 22;
+      const slot = slotRef.current;
+      const step = Math.min(22, 222 / slot);
+      for (let i = 0; i < slot; i++) {
+        const bx = 24 + i * step;
         const by = H - 44;
         const hit = i < hitCountRef.current;
         const miss = !hit && i < hitCountRef.current + missCountRef.current;
+        const box = Math.max(8, step - 6);
         ctx.fillStyle = hit ? "#FF4444" : miss ? "#888" : "#333";
-        ctx.fillRect(bx, by, 16, 16);
-        if (hit) {
+        ctx.fillRect(bx, by, box, 16);
+        if (hit && box >= 12) {
           ctx.fillStyle = "#FFF";
-          ctx.fillRect(bx + 3, by + 6, 10, 3);
-          ctx.fillRect(bx + 6, by + 3, 3, 10);
+          ctx.fillRect(bx + box / 2 - 5, by + 6, 10, 3);
+          ctx.fillRect(bx + box / 2 - 1.5, by + 3, 3, 10);
         }
       }
 
@@ -710,19 +828,22 @@ export default function Game() {
       // Label
       px("AMMO", ammoX + 8, ammoY + 26, 10, bullets <= 5 ? "#FF4444" : "#AAA");
 
-      // Bullet pips (20 dots in two rows of 10)
-      for (let i = 0; i < BULLETS_PER_ROUND; i++) {
-        const col = i % 10;
-        const row = Math.floor(i / 10);
-        const bx = ammoX + 64 + col * 20;
+      // Bullet pips in two rows (10 for a slot of 5, up to 30 for a slot of 15)
+      const maxBullets = bulletsFor(slotRef.current);
+      const perRow = Math.ceil(maxBullets / 2);
+      const pipStep = Math.min(20, 204 / perRow);
+      for (let i = 0; i < maxBullets; i++) {
+        const col = i % perRow;
+        const row = Math.floor(i / perRow);
+        const bx = ammoX + 64 + col * pipStep;
         const by = ammoY + 8 + row * 14;
         const spent = i >= bullets;
         ctx.fillStyle = spent ? "#333" : (bullets <= 5 ? "#FF4444" : "#FFD700");
-        ctx.fillRect(bx, by, 10, 9);
+        ctx.fillRect(bx, by, Math.min(10, pipStep - 3), 9);
         if (!spent) {
           // Highlight top edge for "live" bullets
           ctx.fillStyle = "rgba(255,255,255,0.3)";
-          ctx.fillRect(bx, by, 10, 2);
+          ctx.fillRect(bx, by, Math.min(10, pipStep - 3), 2);
         }
       }
 
@@ -840,8 +961,34 @@ export default function Game() {
                   style={{ fontFamily: '"Press Start 2P", monospace', fontSize: 11 }}>
                   <p className="text-white mb-4 leading-7">1. POINT INDEX FINGER TO AIM</p>
                   <p className="text-white mb-8 leading-7">2. PINCH THUMB TO SHOOT</p>
-                  <p className="text-[#5C94FC] mb-3">{TOTAL_ROUNDS} ROUNDS  •  {DUCKS_PER_ROUND} DUCKS EACH</p>
-                  <p className="text-[#5C94FC] mb-6">{ROUND_DURATION_SEC}s PER ROUND</p>
+                  <p className="text-[#5C94FC] mb-6">{TOTAL_ROUNDS} ROUNDS  •  {slotLabel} DUCKS EACH</p>
+
+                  {/* Slot selector: how many ducks fly per round */}
+                  <div className="pointer-events-auto mb-6">
+                    <p className="text-white/60 mb-3 text-[10px]">DUCKS PER ROUND</p>
+                    <div className="flex gap-3 justify-center">
+                      {SLOT_OPTIONS.map((n) => {
+                        const active = slotLabel === n;
+                        return (
+                          <button
+                            key={n}
+                            onClick={() => {
+                              setSlotLabel(n);
+                              slotRef.current = n;
+                              bulletsRef.current = bulletsFor(n);
+                            }}
+                            className={`px-3 py-2 rounded border text-[10px] transition-all ${
+                              active
+                                ? "bg-[#00FFFF] text-black border-[#00FFFF]"
+                                : "bg-transparent text-white/60 border-white/20 hover:border-white/50"
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
                   {/* Speed selector — needs pointer-events-auto to be clickable */}
                   <div className="pointer-events-auto mb-8">
@@ -885,7 +1032,7 @@ export default function Game() {
               <div style={{ fontFamily: '"Press Start 2P", monospace' }}>
                 <h2 className="text-3xl text-white mb-6">ROUND {uiRoundSummary.round} CLEAR</h2>
                 <p className="text-[#FFD700] text-xl mb-2">
-                  HITS: {uiRoundSummary.hits} / {DUCKS_PER_ROUND}
+                  HITS: {uiRoundSummary.hits} / {slotLabel}
                 </p>
                 <p className="text-[#00FFFF] text-lg mb-10">
                   SCORE: {uiRoundSummary.score}
